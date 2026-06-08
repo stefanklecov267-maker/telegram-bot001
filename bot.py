@@ -2,28 +2,19 @@ import os
 import uuid
 import yt_dlp
 
-from pyrogram import Client, filters
-from pyrogram.types import (
-    InlineKeyboardMarkup,
-    InlineKeyboardButton
-)
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command
+import asyncio
 
 # ==========================
-# ВСТАВЬ СВОИ ДАННЫЕ
+# ВСТАВЬ СВОЙ ТОКЕН
 # ==========================
-
-API_ID = 34563616
-API_HASH = "836a6cc95181459b6b35cba305bd1f1d"
 BOT_TOKEN = "8893865728:AAGrW3V28AojVZZN_iUjnDChPf5NJJhiylw"
-
 # ==========================
 
-bot = Client(
-    "video_downloader_bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN
-)
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
 
 video_cache = {}
 
@@ -78,19 +69,19 @@ def download_audio(url):
     return filename
 
 
-@bot.on_message(filters.command("start"))
-async def start(_, message):
-    await message.reply(
-        "👋 Отправь ссылку на видео.\n\n"
+@dp.message(Command("start"))
+async def start(message: types.Message):
+    await message.answer(
+        "👋 Отправь ссылку на видео\n\n"
         "Поддержка:\n"
         "• YouTube\n"
         "• TikTok\n"
-        "• Instagram\n"
+        "• Instagram"
     )
 
 
-@bot.on_message(filters.text & ~filters.command("start"))
-async def process_link(_, message):
+@dp.message()
+async def process_link(message: types.Message):
     url = message.text.strip()
 
     try:
@@ -99,80 +90,71 @@ async def process_link(_, message):
         uid = str(uuid.uuid4())
         video_cache[uid] = info
 
-        keyboard = InlineKeyboardMarkup([
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    "📹 Скачать видео",
+                    text="📹 Скачать видео",
                     callback_data=f"video|{uid}"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    "🎵 Скачать MP3",
+                    text="🎵 Скачать MP3",
                     callback_data=f"audio|{uid}"
                 )
             ]
         ])
 
-        await message.reply(
-            f"🎬 {info['title']}",
-            reply_markup=keyboard
-        )
+        await message.answer(f"🎬 {info['title']}", reply_markup=keyboard)
 
     except Exception as e:
-        await message.reply(f"❌ Ошибка:\n{e}")
+        await message.answer(f"❌ Ошибка:\n{e}")
 
 
-@bot.on_callback_query()
-async def callback_handler(_, callback_query):
-    data = callback_query.data.split("|")
-
-    action = data[0]
-    uid = data[1]
+@dp.callback_query()
+async def callback_handler(callback: types.CallbackQuery):
+    action, uid = callback.data.split("|")
 
     info = video_cache.get(uid)
 
     if not info:
-        await callback_query.answer("Данные устарели")
+        await callback.answer("Данные устарели")
         return
 
-    await callback_query.answer()
-
-    status = await callback_query.message.reply(
-        "⏳ Скачиваю..."
-    )
+    await callback.answer()
+    msg = await callback.message.answer("⏳ Скачиваю...")
 
     try:
-
         if action == "video":
             file_path = download_video(info["url"])
 
-            await callback_query.message.reply_video(
-                file_path,
-                caption=info["title"],
-                supports_streaming=True
+            await callback.message.answer_video(
+                types.FSInputFile(file_path),
+                caption=info["title"]
             )
 
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            os.remove(file_path)
 
         elif action == "audio":
-            audio_path = download_audio(info["url"])
+            file_path = download_audio(info["url"])
 
-            await callback_query.message.reply_audio(
-                audio_path,
+            await callback.message.answer_audio(
+                types.FSInputFile(file_path),
                 title=info["title"]
             )
 
-            if os.path.exists(audio_path):
-                os.remove(audio_path)
+            os.remove(file_path)
 
-        await status.delete()
+        await msg.delete()
 
     except Exception as e:
-        await status.edit_text(f"❌ Ошибка:\n{e}")
+        await msg.edit_text(f"❌ Ошибка:\n{e}")
 
 
-print("Бот запущен")
+async def main():
+    print("Бот запущен")
+    await dp.start_polling(bot)
 
-bot.run()
+
+if __name__ == "__main__":
+    asyncio.run(main())
