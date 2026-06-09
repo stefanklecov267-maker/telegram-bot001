@@ -8,9 +8,9 @@ from pyrogram.types import (
     InlineKeyboardButton
 )
 
-API_ID = int(os.getenv("34563616"))
-API_HASH = os.getenv("836a6cc95181459b6b35cba305bd1f1d")
-BOT_TOKEN = os.getenv("8893865728:AAGrW3V28AojVZZN_iUjnDChPf5NJJhiylw")
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 bot = Client(
     "video_downloader_bot",
