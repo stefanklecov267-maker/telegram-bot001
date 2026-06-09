@@ -7,8 +7,8 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # Настройки
 API_ID = int(os.getenv("API_ID", 12345678))
-API_HASH = os.getenv("API_HASH", "ваш_hash")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "ваш_token")
+API_HASH = os.getenv("API_HASH", "836a6cc95181459b6b35cba305bd1f1d")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8893865728:AAGrW3V28AojVZZN_iUjnDChPf5NJJhiylw")
 
 bot = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 video_cache = {}
