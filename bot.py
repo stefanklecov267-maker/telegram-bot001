@@ -3,11 +3,14 @@ import uuid
 import yt_dlp
 
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import (
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
+)
 
-API_ID = 34563616
-API_HASH = "836a6cc95181459b6b35cba305bd1f1d"
-BOT_TOKEN = "8893865728:AAGrW3V28AojVZZN_iUjnDChPf5NJJhiylw"
+API_ID = int(os.getenv("34563616"))
+API_HASH = os.getenv("836a6cc95181459b6b35cba305bd1f1d")
+BOT_TOKEN = os.getenv("8893865728:AAGrW3V28AojVZZN_iUjnDChPf5NJJhiylw")
 
 bot = Client(
     "video_downloader_bot",
@@ -19,53 +22,61 @@ bot = Client(
 video_cache = {}
 
 
-# --------------------------
-# Получение инфо + качество
-# --------------------------
 def get_video_info(url):
-    ydl_opts = {"quiet": True, "noplaylist": True}
+    ydl_opts = {
+        "quiet": True,
+        "noplaylist": True
+    }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
 
     qualities = []
 
-    # только для YouTube
-    if "youtube" in info.get("extractor", ""):
+    extractor = info.get("extractor", "").lower()
+
+    if "youtube" in extractor:
         seen = set()
-        for f in info.get("formats", []):
-            h = f.get("height")
-            if f.get("vcodec") != "none" and h in [360, 480, 720, 1080]:
-                if h not in seen:
-                    seen.add(h)
-                    qualities.append(h)
+
+        for fmt in info.get("formats", []):
+            height = fmt.get("height")
+
+            if (
+                height
+                and fmt.get("vcodec") != "none"
+                and height not in seen
+            ):
+                seen.add(height)
+                qualities.append(height)
 
         qualities.sort()
 
     return {
         "url": url,
         "title": info.get("title", "Видео"),
-        "is_youtube": "youtube" in info.get("extractor", ""),
+        "is_youtube": "youtube" in extractor,
         "qualities": qualities
     }
 
 
-# --------------------------
-# Скачать видео (YouTube quality or best)
-# --------------------------
 def download_video(url, quality=None):
-    filename = f"{uuid.uuid4()}.mp4"
+    filename = f"/tmp/{uuid.uuid4()}.mp4"
 
     if quality:
-        fmt = f"bestvideo[height<={quality}]+bestaudio/best"
+        fmt = (
+            f"bestvideo[height<={quality}]"
+            "+bestaudio"
+            "/best[height<={quality}]"
+        )
     else:
-        fmt = "best"
+        fmt = "bestvideo+bestaudio/best"
 
     ydl_opts = {
         "format": fmt,
         "merge_output_format": "mp4",
         "outtmpl": filename,
-        "noplaylist": True
+        "noplaylist": True,
+        "quiet": True
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -74,13 +85,13 @@ def download_video(url, quality=None):
     return filename
 
 
-# --------------------------
 def download_audio(url):
-    filename = f"{uuid.uuid4()}.mp3"
+    filename = f"/tmp/{uuid.uuid4()}"
 
     ydl_opts = {
         "format": "bestaudio/best",
-        "outtmpl": filename.replace(".mp3", ".%(ext)s"),
+        "outtmpl": filename + ".%(ext)s",
+        "quiet": True,
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
@@ -91,23 +102,26 @@ def download_audio(url):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
 
-    return filename
+    return filename + ".mp3"
 
 
-# --------------------------
 @bot.on_message(filters.command("start"))
 async def start(_, message):
     await message.reply(
-        "👋 Отправь ссылку на видео"
+        "👋 Отправь ссылку на видео."
     )
 
 
-# --------------------------
 @bot.on_message(filters.text & ~filters.command("start"))
 async def process_link(_, message):
+
     url = message.text.strip()
 
     try:
+        wait_msg = await message.reply(
+            "🔍 Получаю информацию..."
+        )
+
         info = get_video_info(url)
 
         uid = str(uuid.uuid4())
@@ -115,15 +129,26 @@ async def process_link(_, message):
 
         buttons = []
 
-        # если YouTube → показываем качество
         if info["is_youtube"] and info["qualities"]:
+
+            row = []
+
             for q in info["qualities"]:
-                buttons.append([
+
+                row.append(
                     InlineKeyboardButton(
-                        f"📹 {q}p",
+                        f"{q}p",
                         callback_data=f"video|{uid}|{q}"
                     )
-                ])
+                )
+
+                if len(row) == 3:
+                    buttons.append(row)
+                    row = []
+
+            if row:
+                buttons.append(row)
+
         else:
             buttons.append([
                 InlineKeyboardButton(
@@ -139,18 +164,20 @@ async def process_link(_, message):
             )
         ])
 
-        await message.reply(
+        await wait_msg.edit_text(
             f"🎬 {info['title']}",
             reply_markup=InlineKeyboardMarkup(buttons)
         )
 
     except Exception as e:
-        await message.reply(f"❌ Ошибка:\n{e}")
+        await message.reply(
+            f"❌ Ошибка:\n{e}"
+        )
 
 
-# --------------------------
 @bot.on_callback_query()
 async def callback(_, callback_query):
+
     data = callback_query.data.split("|")
 
     action = data[0]
@@ -159,20 +186,33 @@ async def callback(_, callback_query):
     info = video_cache.get(uid)
 
     if not info:
-        await callback_query.answer("Устарело")
+        await callback_query.answer(
+            "Данные устарели",
+            show_alert=True
+        )
         return
 
     await callback_query.answer()
 
-    msg = await callback_query.message.reply("⏳ Скачиваю...")
+    status = await callback_query.message.reply(
+        "⏳ Скачиваю..."
+    )
 
     try:
 
         if action == "video":
-            quality = data[2]
-            quality = None if quality == "best" else int(quality)
 
-            file_path = download_video(info["url"], quality)
+            quality = data[2]
+
+            if quality == "best":
+                quality = None
+            else:
+                quality = int(quality)
+
+            file_path = download_video(
+                info["url"],
+                quality
+            )
 
             await callback_query.message.reply_video(
                 file_path,
@@ -180,24 +220,31 @@ async def callback(_, callback_query):
                 supports_streaming=True
             )
 
-            os.remove(file_path)
+            if os.path.exists(file_path):
+                os.remove(file_path)
 
         elif action == "audio":
-            audio = download_audio(info["url"])
+
+            audio_file = download_audio(
+                info["url"]
+            )
 
             await callback_query.message.reply_audio(
-                audio,
+                audio_file,
                 title=info["title"]
             )
 
-            os.remove(audio)
+            if os.path.exists(audio_file):
+                os.remove(audio_file)
 
-        await msg.delete()
+        await status.delete()
 
     except Exception as e:
-        await msg.edit_text(f"❌ Ошибка:\n{e}")
+
+        await status.edit_text(
+            f"❌ Ошибка:\n{e}"
+        )
 
 
 print("Bot started")
 bot.run()
-
