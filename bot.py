@@ -7,7 +7,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 API_ID = 34563616
 API_HASH = "836a6cc95181459b6b35cba305bd1f1d"
-BOT_TOKEN = "8893865728:REPLACE_THIS_WITH_NEW_TOKEN"
+BOT_TOKEN = "8893865728:AAGrW3V28AojVZZN_iUjnDChPf5NJJhiylw"
 
 bot = Client(
     "video_downloader_bot",
