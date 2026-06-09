@@ -1,77 +1,83 @@
-import asyncio
 import os
-import sys
-
-# Важные настройки для запуска на Render
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
-
 import uuid
-import tempfile
 import yt_dlp
-from aiohttp import web
 from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Конфигурация
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-PORT = int(os.getenv("PORT", 8080))
+# Настройки из переменных окружения
+API_ID = int(os.getenv("API_ID", 12345678))
+API_HASH = os.getenv("API_HASH", "ваш_hash")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ваш_token")
 
-bot = Client("video_downloader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 video_cache = {}
 
-async def web_handler(request):
-    return web.Response(text="Bot is running")
-
-def get_video_info(url):
-    ydl_opts = {"quiet": True, "noplaylist": True}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+def get_video_formats(url):
+    with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
         info = ydl.extract_info(url, download=False)
-    qualities = sorted(list(set(fmt.get("height") for fmt in info.get("formats", []) 
-                      if fmt.get("height") and fmt.get("vcodec") != "none")))
-    return {"url": url, "title": info.get("title", "Video"), "qualities": qualities}
-
-async def download_file(url, quality=None, is_audio=False):
-    tmp = tempfile.gettempdir()
-    name = os.path.join(tmp, str(uuid.uuid4()))
-    opts = {
-        "format": "bestaudio/best" if is_audio else (f"bestvideo[height<={quality}]+bestaudio/best" if quality else "best"),
-        "outtmpl": f"{name}.%(ext)s",
-        "merge_output_format": "mp4"
-    }
-    if is_audio:
-        opts["postprocessors"] = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}]
-    
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
-    return f"{name}.mp3" if is_audio else f"{name}.mp4"
+        # Проверяем, YouTube ли это для предложения качества
+        is_yt = "youtube.com" in url or "youtu.be" in url
+        formats = []
+        if is_yt:
+            # Берем только видео с аудио
+            for f in info.get('formats', []):
+                if f.get('height') in [720, 360, 1080]:
+                    formats.append({"id": f['format_id'], "res": f"{f['height']}p"})
+        return info, formats
 
 @bot.on_message(filters.command("start"))
 async def start(_, message):
-    await message.reply("Привет! Отправь мне ссылку на видео.")
+    await message.reply("Пришли ссылку (YT, TikTok, Insta, Twitter).")
 
 @bot.on_message(filters.text & ~filters.command("start"))
 async def process_link(_, message):
     url = message.text.strip()
-    wait = await message.reply("🔍 Получаю информацию...")
     try:
-        info = get_video_info(url)
+        info, formats = get_video_formats(url)
         uid = str(uuid.uuid4())
-        video_cache[uid] = info
-        await wait.edit_text(f"🎬 {info['title']}\n\nВыберите качество:")
+        video_cache[uid] = {"url": url, "title": info.get("title")}
+
+        buttons = [[InlineKeyboardButton("Скачать MP3", callback_data=f"a|{uid}")]]
+        if formats:
+            for f in formats:
+                buttons.append([InlineKeyboardButton(f"Видео {f['res']}", callback_data=f"v|{uid}|{f['id']}")])
+        else:
+            buttons.append([InlineKeyboardButton("Скачать Видео", callback_data=f"v|{uid}|best")])
+
+        await message.reply(f"🎬 {info['title']}", reply_markup=InlineKeyboardMarkup(buttons))
     except Exception as e:
-        await wait.edit_text(f"❌ Ошибка: {e}")
+        await message.reply(f"Ошибка: {e}")
 
-async def run_bot():
-    app = web.Application()
-    app.router.add_get('/', web_handler)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    await web.TCPSite(runner, '0.0.0.0', PORT).start()
-    await bot.start()
-    print("Бот запущен!")
-    await asyncio.Event().wait()
+@bot.on_callback_query()
+async def callback_handler(_, cq):
+    data = cq.data.split("|")
+    type, uid, format_id = data[0], data[1], data[2] if len(data) > 2 else "best"
+    info = video_cache.get(uid)
+    if not info: return await cq.answer("Устарело")
 
-if __name__ == "__main__":
-    loop.run_until_complete(run_bot())
+    await cq.answer("Начинаю...")
+    msg = await cq.message.reply("⏳ Скачиваю...")
+    
+    fname = f"{uuid.uuid4()}"
+    ydl_opts = {"outtmpl": f"{fname}.%(ext)s", "noplaylist": True}
+    
+    try:
+        if type == "a":
+            ydl_opts.update({"format": "bestaudio", "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}]})
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl: ydl.download([info["url"]])
+            await cq.message.reply_audio(f"{fname}.mp3")
+            os.remove(f"{fname}.mp3")
+        else:
+            ydl_opts.update({"format": f"{format_id}+bestaudio/best"})
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl: ydl.download([info["url"]])
+            # Ищем скачанный файл (yt-dlp добавляет расширение)
+            for f in os.listdir('.'):
+                if f.startswith(fname):
+                    await cq.message.reply_video(f)
+                    os.remove(f)
+                    break
+        await msg.delete()
+    except Exception as e:
+        await msg.edit_text(f"Ошибка: {e}")
+
+bot.run()
